@@ -4,7 +4,24 @@ An interview demo for the CTO role described in the brief: airline/LCC supplier 
 
 ## Run locally
 
-Open `index.html` in a modern browser. The demo is static, has no build step, external service, model API key, or token cost. Orders are stored in that browser's `localStorage` and can be cleared from browser settings.
+For the mock-data demo, open `index.html` in a modern browser. It has no build step, external service, model API key, or token cost. Orders are stored in that browser's `localStorage` and can be cleared from browser settings. To use the SIA NDC preparation page, run the local backend as described below.
+
+## Singapore Airlines NDC preparation
+
+The **新航 NDC** page adds a first vertical slice for Singapore Airlines NDC 21.3 `AirShopping`. It builds a one-way search request and sends it from a Node backend, so credentials never enter the browser. OrderCreate, payment, passenger identity data and ticket issuance are deliberately not implemented. The response is shown as raw XML until a partner-specific sample is available for a proper Offer normalization mapping.
+
+To run the front end and secure local proxy together:
+
+```powershell
+Copy-Item .env.example .env
+node backend/server.mjs
+```
+
+Open `http://localhost:8787/` and select **新航 NDC**. Without approved partner access the backend reports `not configured` and does not make an upstream request. Fill `.env` only with the endpoint, authentication header, Seller ID and Distributor ID provided by SIA/Amadeus after onboarding. Never put these values in `index.html`, GitHub Pages, source control, screenshots or chat. `.env` is ignored by Git.
+
+The current public GitHub Pages site is static and cannot run the proxy or hold secrets. A public real-sandbox demo therefore also needs a separately deployed backend, restricted CORS to the Pages origin, and server-side secrets. The local `.env.example` already restricts browser calls to the Pages origin and local development origins. After deploying the backend, set the non-secret `<meta name="sia-api-base" content="https://YOUR-BACKEND-HOST">` in `index.html` to that backend's origin. The base URL is public configuration; credentials stay in the backend host's secret store.
+
+SIA's published catalogue states that direct-connect partners must sign the tripartite NDA and submit the direct-connect application. The published catalogue is based on Amadeus Altéa NDC 21.3 and describes AirShopping, OfferPrice, OrderCreate and servicing operations. Implementation reference: [SIA NDC API catalogue](https://developer.singaporeair.com/ndc_api_catalogue), [SIA direct-connect resources](https://developer.singaporeair.com/page/ndc_resource), and the linked [AirShopping 21.3 implementation guide](https://developer.singaporeair.com/files/AmadeusAlteaNDC_AirShopping_21.3_Implementation_Guide_MAY24.pdf).
 
 To serve the same files over HTTP instead:
 
@@ -38,7 +55,7 @@ flowchart LR
   C --> F
 ```
 
-The prototype intentionally uses deterministic pricing and a local order simulator. The Copilot routes a small set of intents to read-only local functions. It does not run an LLM or place orders.
+The prototype intentionally uses deterministic pricing and a local order simulator. The Copilot routes a small set of intents to read-only local functions. It does not run an LLM or place orders. The SIA NDC page is an opt-in backend integration scaffold; it does not return live airline data until authorized partner credentials and endpoint details are configured.
 
 ## GitHub references and integration boundary
 
