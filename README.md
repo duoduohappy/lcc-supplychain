@@ -4,7 +4,15 @@ An interview demo for the CTO role described in the brief: airline/LCC supplier 
 
 ## Run locally
 
-For the mock-data demo, open `index.html` in a modern browser. It has no build step, external service, model API key, or token cost. Orders are stored in that browser's `localStorage` and can be cleared from browser settings. To use the SIA NDC preparation page, run the local backend as described below.
+For the mock-data demo, open `index.html` in a modern browser. It has no build step or model API key. Orders are stored in that browser's `localStorage` and can be cleared from browser settings. To use FlightAPI search or the SIA NDC preparation page, run the local backend as described below.
+
+## FlightAPI live flight search
+
+The **实时航班搜索** page calls FlightAPI's one-way flight-price endpoint through the Node backend. The backend normalizes itineraries, flight legs, segments, carriers, and price-source options. The page supports price ceiling, stop-count and airline/source filters, plus sorting by price, duration, or departure time. Filtering and sorting run locally after the single upstream search, so they do not consume additional API calls. The FlightAPI key is read only from `FLIGHTAPI_KEY`; it is never sent to the browser.
+
+Copy `.env.example` to `.env` and set `FLIGHTAPI_KEY` to the key from your FlightAPI dashboard. Start the server and open `http://localhost:8787/`, then choose **实时航班搜索**. Search inputs include IATA codes, date, passengers, cabin, currency and market region. FlightAPI's one-way endpoint currently costs two credits per API call according to its docs. Results are third-party aggregated prices and may need revalidation; this integration does not create orders, take payment, issue tickets, or constitute direct airline NDC connectivity.
+
+GitHub Pages cannot keep a secret or run the backend. The demo uses a Tencent Cloud SCF Web Function, with `FLIGHTAPI_KEY` configured only in the function environment and `APP_ORIGINS=https://duoduohappy.github.io`. The public endpoint is configured in the `flight-api-base` meta tag in `index.html`; the browser calls the backend, which calls FlightAPI server-side. Never commit `.env`, put the API key in HTML, or share an unmasked key in screenshots or chat. CORS restricts browser origins but does not prevent direct HTTP clients from calling the public function URL; monitor FlightAPI credits and SCF usage.
 
 ## Singapore Airlines NDC preparation
 
