@@ -48,6 +48,135 @@ function validateSearch(input) {
   return { origin, destination, departureDate, passengers };
 }
 
+const FLIGHTAPI_BASE_URL = 'https://api.flightapi.io/onewaytrip';
+
+export function validateFlightApiSearch(input) {
+  const origin = String(input.origin || '').trim().toUpperCase();
+  const destination = String(input.destination || '').trim().toUpperCase();
+  const departureDate = String(input.departureDate || '').trim();
+  const adults = Number(input.adults ?? 1);
+  const children = Number(input.children ?? 0);
+  const infants = Number(input.infants ?? 0);
+  const cabinClass = String(input.cabinClass || 'Economy');
+  const currency = String(input.currency || 'USD').trim().toUpperCase();
+  const region = String(input.region || 'US').trim().toUpperCase();
+
+  if (!/^[A-Z]{3}$/.test(origin) || !/^[A-Z]{3}$/.test(destination) || origin === destination) {
+    throw new Error('出发和到达地必须是不同的 3 位 IATA 机场代码。');
+  }
+  const parsedDate = new Date(`${departureDate}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(departureDate) || Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== departureDate) {
+    throw new Error('出发日期格式应为 YYYY-MM-DD。');
+  }
+  if (departureDate < new Date().toISOString().slice(0, 10)) throw new Error('出发日期必须是今天或未来日期。');
+  if (![adults, children, infants].every(Number.isInteger) || adults < 1 || adults > 9 || children < 0 || infants < 0 || adults + children + infants > 9) {
+    throw new Error('旅客总数须为 1 到 9 人，且至少有 1 位成人。');
+  }
+  if (!['Economy', 'Premium_Economy', 'Business', 'First'].includes(cabinClass)) throw new Error('舱位仅支持 Economy、Premium_Economy、Business 或 First。');
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('币种须为 3 位 ISO 代码，例如 USD 或 CNY。');
+  if (!/^[A-Z]{2}$/.test(region)) throw new Error('市场区域须为 2 位国家/地区代码，例如 US、CN 或 SG。');
+  return { origin, destination, departureDate, adults, children, infants, cabinClass, currency, region };
+}
+
+export function normalizeFlightApiResponse(payload) {
+  if (!payload || !Array.isArray(payload.itineraries)) throw new Error('FlightAPI 返回的数据格式无法识别。');
+  const byId = (items) => new Map((Array.isArray(items) ? items : []).map((item) => [String(item.id), item]));
+  const legs = byId(payload.legs);
+  const segments = byId(payload.segments);
+  const places = byId(payload.places);
+  const carriers = byId(payload.carriers);
+  const agents = byId(payload.agents);
+  const offers = [];
+
+  for (const itinerary of payload.itineraries) {
+    const itineraryLegs = (itinerary.leg_ids || []).map((id) => legs.get(String(id))).filter(Boolean);
+    const firstLeg = itineraryLegs[0];
+    if (!firstLeg) continue;
+    const itinerarySegments = (firstLeg.segment_ids || []).map((id) => segments.get(String(id))).filter(Boolean);
+    const priceOptions = Array.isArray(itinerary.pricing_options) ? itinerary.pricing_options : [];
+    for (const option of priceOptions) {
+      const item = Array.isArray(option.items) ? option.items[0] : null;
+      const amount = Number(option.price?.amount ?? item?.price?.amount);
+      if (!Number.isFinite(amount) || amount < 0) continue;
+      const sourceIds = option.agent_ids?.length ? option.agent_ids : (item?.agent_id ? [item.agent_id] : []);
+      const sources = sourceIds.map((id) => agents.get(String(id))).filter(Boolean);
+      const carrierIds = firstLeg.marketing_carrier_ids || [];
+      const airlineNames = [...new Set(carrierIds.map((id) => carriers.get(String(id))?.name).filter(Boolean))];
+      const placeName = (id) => places.get(String(id))?.name || String(id || '');
+      const placeCode = (id) => places.get(String(id))?.display_code || places.get(String(id))?.alt_id || '';
+      const price = option.price || item?.price || {};
+      offers.push({
+        id: `${itinerary.id}:${option.id || sourceIds.join(',') || offers.length}`,
+        itineraryId: String(itinerary.id || ''),
+        source: sources.map((source) => source.name).join(' / ') || '报价来源未标注',
+        sourceType: sources.length && sources.every((source) => source.is_carrier) ? '航司' : '代理/平台',
+        airline: airlineNames.join(' / ') || '航司未标注',
+        currency: payload.query?.currency || 'USD',
+        price: amount,
+        priceStatus: String(price.update_status || 'unknown'),
+        quoteAgeMinutes: Number.isFinite(Number(price.quote_age)) ? Number(price.quote_age) : null,
+        lastUpdated: price.last_updated || null,
+        stops: Number(firstLeg.stop_count || 0),
+        durationMinutes: Number(firstLeg.duration || 0),
+        departure: firstLeg.departure || itinerarySegments[0]?.departure || '',
+        arrival: firstLeg.arrival || itinerarySegments.at(-1)?.arrival || '',
+        origin: { code: placeCode(firstLeg.origin_place_id), name: placeName(firstLeg.origin_place_id) },
+        destination: { code: placeCode(firstLeg.destination_place_id), name: placeName(firstLeg.destination_place_id) },
+        segments: itinerarySegments.map((segment) => ({
+          flightNumber: segment.marketing_flight_number || '',
+          airline: carriers.get(String(segment.marketing_carrier_id))?.name || '',
+          origin: placeCode(segment.origin_place_id),
+          destination: placeCode(segment.destination_place_id),
+          departure: segment.departure || '',
+          arrival: segment.arrival || '',
+          durationMinutes: Number(segment.duration || 0),
+        })),
+      });
+    }
+  }
+  return {
+    provider: 'FlightAPI',
+    currency: payload.query?.currency || 'USD',
+    market: payload.query?.market || '',
+    resultCount: Math.min(offers.length, 500),
+    offers: offers.slice(0, 500),
+  };
+}
+
+async function searchFlightApi(request, response) {
+  const apiKey = String(process.env.FLIGHTAPI_KEY || '').trim();
+  if (!apiKey) return json(response, 503, { error: '后端未配置 FlightAPI Key。请在服务端环境变量中设置 FLIGHTAPI_KEY。' });
+  let search;
+  try {
+    search = validateFlightApiSearch(await readJson(request));
+  } catch (error) {
+    return json(response, 400, { error: error instanceof SyntaxError ? '请求必须是合法 JSON。' : error.message });
+  }
+
+  const path = [apiKey, search.origin, search.destination, search.departureDate, search.adults, search.children, search.infants, search.cabinClass, search.currency]
+    .map((part) => encodeURIComponent(String(part))).join('/');
+  const endpoint = new URL(`${FLIGHTAPI_BASE_URL}/${path}`);
+  endpoint.searchParams.set('region', search.region);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25_000);
+  try {
+    const upstream = await fetch(endpoint, { headers: { Accept: 'application/json' }, signal: controller.signal });
+    const raw = await upstream.text();
+    if (Buffer.byteLength(raw, 'utf8') > 5_000_000) return json(response, 502, { error: 'FlightAPI 响应超过 5 MB 限制。' });
+    if (!upstream.ok) return json(response, 502, { error: `FlightAPI 请求失败（HTTP ${upstream.status}）。请检查 API Key、免费额度和搜索参数。` });
+    let payload;
+    try { payload = JSON.parse(raw); } catch { return json(response, 502, { error: 'FlightAPI 返回的内容不是合法 JSON。' }); }
+    let result;
+    try { result = normalizeFlightApiResponse(payload); } catch (error) { return json(response, 502, { error: error.message }); }
+    return json(response, 200, result);
+  } catch (error) {
+    const timedOut = error.name === 'AbortError';
+    return json(response, 502, { error: timedOut ? 'FlightAPI 查询超时（25 秒）。' : '连接 FlightAPI 失败，请检查网络后重试。' });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function buildAirShoppingRequest(input, config = process.env) {
   const { origin, destination, departureDate, passengers } = validateSearch(input);
   const sellerId = String(config.SIA_NDC_SELLER_ID || '').trim();
@@ -192,6 +321,12 @@ const server = createServer(async (request, response) => {
       writesEnabled: false,
     });
   }
+  if (request.method === 'GET' && url.pathname === '/api/flightapi/status') {
+    return json(response, 200, { provider: 'FlightAPI', configured: Boolean(process.env.FLIGHTAPI_KEY), operation: 'One-way Flight Price Search', writesEnabled: false });
+  }
+  if (request.method === 'POST' && url.pathname === '/api/flightapi/search') {
+    return searchFlightApi(request, response);
+  }
   if (request.method === 'POST' && url.pathname === '/api/sia/air-shopping') {
     return sendAirShopping(request, response);
   }
@@ -209,7 +344,7 @@ const server = createServer(async (request, response) => {
 });
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  server.listen(port, '127.0.0.1', () => {
+  server.listen(port, '0.0.0.0', () => {
     console.log(`AirBridge local server listening on http://localhost:${port}`);
   });
 }
