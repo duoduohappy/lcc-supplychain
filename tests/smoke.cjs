@@ -49,10 +49,13 @@ vm.runInContext(match[1], context, { filename: 'index.html:inline-script' });
 const content = element('content').innerHTML;
 assert.match(content, /航空供应链经营总览/);
 assert.match(content, /SUPPLY/);
-for (const next of ['supply', 'pricing', 'trading', 'finance', 'copilot']) {
+for (const next of ['supply', 'siaNdc', 'pricing', 'trading', 'finance', 'copilot']) {
   vm.runInContext(`page = '${next}'; render()`, context);
   assert.ok(element('content').innerHTML.length > 250, `${next} page renders`);
 }
+vm.runInContext("page = 'siaNdc'; render()", context);
+assert.match(element('content').innerHTML, /调用 AirShopping/);
+assert.match(element('content').innerHTML, /不创建订单、不支付、不出票/);
 vm.runInContext(`page = 'pricing'; render(); runAsk('PEK 到 KIX 哪个报价含行李后最划算？')`, context);
 assert.match(element('content').innerHTML, /统一报价列表/);
 assert.match(element('trace').innerHTML, /CompareOffers/);
@@ -65,5 +68,5 @@ confirm.onclick();
 assert.equal(JSON.parse(storage['airbridge-orders']).length, 1, 'confirmed demo order is persisted locally');
 vm.runInContext("page = 'finance'; render()", context);
 assert.match(element('content').innerHTML, /AB-/);
-process.stdout.write('PASS: overview, 5 modules, copilot, pricing, human-confirmed order, and finance ledger\n');
+process.stdout.write('PASS: overview, 5 modules, SIA NDC page, copilot, pricing, simulated order, and finance ledger\n');
 
