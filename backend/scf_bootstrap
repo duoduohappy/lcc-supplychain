@@ -1,0 +1,4 @@
+#!/bin/bash
+export PORT=9000
+exec /var/lang/node18/bin/node server.mjs
+
